@@ -1,0 +1,14 @@
+// Copy this file to Sims/Local.xcconfig and fill in your values.
+// Sims/Local.xcconfig is gitignored — your IDs stay on your machine.
+//
+//   cp Sims/Local.xcconfig.example Sims/Local.xcconfig
+//
+// Then edit the copy.
+
+// Your reverse-DNS bundle identifier. Anything unique to you works.
+PRODUCT_BUNDLE_IDENTIFIER = com.yourname.sims
+
+// Your Apple Developer Team ID (10 chars, alphanumeric).
+// Find it in Xcode → Settings → Accounts → select your team → Team ID,
+// or by running: security find-identity -v -p codesigning
+DEVELOPMENT_TEAM = ABC1234567

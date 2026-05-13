@@ -1,0 +1,17 @@
+// Build configuration for the Sims target.
+//
+// Defaults live here. Per-developer overrides go in Sims/Local.xcconfig,
+// which is gitignored — see Sims/Local.xcconfig.example for the template.
+// The #include? form silently skips the override file when absent, so
+// fresh clones build (Debug, ad-hoc signed) without any local setup.
+
+// Reverse-DNS bundle identifier. Override in Local.xcconfig to use
+// your own (e.g. com.yourname.sims) before shipping a Release build.
+PRODUCT_BUNDLE_IDENTIFIER = com.example.sims
+
+// Apple Developer Team ID. Required for Release / Developer ID /
+// notarized builds. Find yours in Xcode → Settings → Accounts.
+// Leave empty to build Debug only.
+DEVELOPMENT_TEAM =
+
+#include? "Local.xcconfig"

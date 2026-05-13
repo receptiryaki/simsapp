@@ -1,0 +1,41 @@
+# macOS
+.DS_Store
+
+# Xcode — user-specific state
+xcuserdata/
+*.xcuserstate
+**/xcshareddata/IDEWorkspaceChecks.plist
+**/xcshareddata/WorkspaceSettings.xcsettings
+
+# Xcode — build output
+DerivedData/
+build/
+dist/
+
+# Swift Package Manager (we don't use SPM here, but defend against accidents)
+.swiftpm/
+.build/
+Packages/
+Package.resolved
+
+# Local config — your team ID / bundle ID, not for sharing
+Sims/Local.xcconfig
+.env
+
+# Generated from scripts/ExportOptions.plist.template by release.sh
+scripts/ExportOptions.plist
+
+# Signing / credentials — never commit these
+*.p8
+*.p12
+*.pem
+*.cer
+*.key
+*.pfx
+*.mobileprovision
+*.provisionprofile
+*.certSigningRequest
+
+# Editor swap files
+*.swp
+*~
