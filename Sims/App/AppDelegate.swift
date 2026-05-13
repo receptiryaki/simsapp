@@ -141,6 +141,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             action: #selector(NSWindow.newWindowForTab(_:)),
             keyEquivalent: "t"
         ))
+        fileMenu.addItem(NSMenuItem(
+            title: "New Simulator…",
+            action: #selector(SimulatorTabController.newDeviceAction(_:)),
+            keyEquivalent: "n"
+        ))
         fileMenu.addItem(.separator())
         fileMenu.addItem(NSMenuItem(
             title: "Close Tab",

@@ -26,6 +26,12 @@ final class StreamView: NSView {
     /// the letterbox bars don't produce orphan touches inside iOS.
     private var inSequence = false
 
+    /// Visible ring that follows the pointer while a touch is in
+    /// progress — so viewers / screen-recordings can see where the user
+    /// is pressing. Created on mouseDown, repositioned on drag, faded
+    /// out on mouseUp.
+    private var touchRingLayer: CAShapeLayer?
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         commonInit()
@@ -53,6 +59,11 @@ final class StreamView: NSView {
 
     /// True so the view can receive keyDown / keyUp.
     override var acceptsFirstResponder: Bool { true }
+
+    /// Register clicks on an inactive window as touches on the very
+    /// first click — matches Xcode's Simulator, no "click to focus" dead
+    /// click before you can interact.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     func attachInput(_ input: any Input) {
         self.input = input
@@ -96,16 +107,69 @@ final class StreamView: NSView {
             // touch begin, so subsequent moves / ups are also dropped.
             guard withinImage else { return }
             inSequence = true
-        case .move, .up:
-            // Forward only if a `.down` was previously accepted. A drag
-            // that ends outside the image still terminates correctly
-            // because `mapToImage` clamps the point to the image edge.
+            showTouchRing(at: local)
+        case .move:
             guard inSequence else { return }
+            moveTouchRing(to: local)
+        case .up:
+            guard inSequence else { return }
+            hideTouchRing()
         }
         if phase == .up { inSequence = false }
 
         inputQueue.async {
             _ = input.touch1(phase: phase, at: point, size: size)
+        }
+    }
+
+    // MARK: touch overlay
+
+    private static let touchRingDiameter: CGFloat = 44
+
+    private func showTouchRing(at point: CGPoint) {
+        let d = Self.touchRingDiameter
+        let ring = touchRingLayer ?? CAShapeLayer()
+        ring.bounds = CGRect(x: 0, y: 0, width: d, height: d)
+        ring.path = CGPath(ellipseIn: ring.bounds, transform: nil)
+        ring.fillColor = NSColor.systemBlue.withAlphaComponent(0.25).cgColor
+        ring.strokeColor = NSColor.systemBlue.withAlphaComponent(0.9).cgColor
+        ring.lineWidth = 2
+        ring.opacity = 1
+        ring.removeAllAnimations()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        ring.position = point
+        CATransaction.commit()
+        if ring.superlayer == nil { layer?.addSublayer(ring) }
+        touchRingLayer = ring
+    }
+
+    private func moveTouchRing(to point: CGPoint) {
+        guard let ring = touchRingLayer else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        ring.position = point
+        CATransaction.commit()
+    }
+
+    private func hideTouchRing() {
+        guard let ring = touchRingLayer else { return }
+        touchRingLayer = nil
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = ring.presentation()?.opacity ?? 1
+        fade.toValue = 0
+        let scale = CABasicAnimation(keyPath: "transform.scale")
+        scale.fromValue = 1
+        scale.toValue = 1.4
+        let group = CAAnimationGroup()
+        group.animations = [fade, scale]
+        group.duration = 0.25
+        group.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        group.isRemovedOnCompletion = false
+        group.fillMode = .forwards
+        ring.add(group, forKey: "fadeout")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.27) { [weak ring] in
+            ring?.removeFromSuperlayer()
         }
     }
 
@@ -164,29 +228,48 @@ final class StreamView: NSView {
     // MARK: keyboard
 
     override func keyDown(with event: NSEvent) {
-        guard let input,
-              let key = KeyboardKey.fromNSEvent(event)
-        else {
-            super.keyDown(with: event)
-            return
-        }
+        // Plain (non-Cmd) keystrokes. Cmd chords are intercepted in
+        // performKeyEquivalent below before keyDown ever fires.
+        // Swallow unmapped keys silently — calling super beeps.
+        guard let input, let key = KeyboardKey.fromNSEvent(event) else { return }
         let modifiers = Set<KeyModifier>.fromNSEventFlags(event.modifierFlags)
         inputQueue.async {
             _ = input.key(key, modifiers: modifiers, duration: 0)
         }
     }
 
-    /// Suppress AppKit's funk beep when the view doesn't itself act
-    /// on a keystroke — every keystroke goes through `keyDown`, which
-    /// either dispatches into the simulator or falls through to
-    /// `super.keyDown`. We never want the beep.
+    /// Forward Cmd-modifier chords (Cmd+C/V/A/X/Z/F/…) into the sim so
+    /// iOS apps see them. A small allowlist of app-level shortcuts —
+    /// Cmd+Q/W/T/N/H/M, Cmd+Shift+H, Cmd+`, Cmd+Shift+]/[ for tab nav —
+    /// stays on macOS by returning false (menu / system handles them).
+    /// AppKit calls this before keyDown for Cmd chords; returning true
+    /// consumes the event.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        // Only swallow plain text keys; let menu shortcuts (Cmd-Q,
-        // Cmd-W, etc.) flow through to the responder chain.
-        if event.modifierFlags.intersection([.command]).isEmpty == false {
-            return false
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard flags.contains(.command) else {
+            return super.performKeyEquivalent(with: event)
         }
-        return super.performKeyEquivalent(with: event)
+        if Self.isReservedShortcut(event) {
+            return super.performKeyEquivalent(with: event)
+        }
+        guard let input, let key = KeyboardKey.fromNSEvent(event) else {
+            return super.performKeyEquivalent(with: event)
+        }
+        let modifiers = Set<KeyModifier>.fromNSEventFlags(event.modifierFlags)
+        inputQueue.async {
+            _ = input.key(key, modifiers: modifiers, duration: 0)
+        }
+        return true
+    }
+
+    private static func isReservedShortcut(_ event: NSEvent) -> Bool {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let chars = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        let cmd: NSEvent.ModifierFlags = [.command]
+        let cmdShift: NSEvent.ModifierFlags = [.command, .shift]
+        if flags == cmd, ["q", "w", "t", "n", "h", "m", "`"].contains(chars) { return true }
+        if flags == cmdShift, ["h", "]", "[", "{", "}"].contains(chars) { return true }
+        return false
     }
 }
 
@@ -208,10 +291,10 @@ private extension KeyboardKey {
         case 0x7E: return .arrowUp
         default: break
         }
-        // Printable keys by character. Lowercased so Shift+A still
-        // maps to .keyA (the modifier rides separately through
-        // `fromNSEventFlags`). US-layout assumption.
-        guard let chars = event.charactersIgnoringModifiers?.lowercased(),
+        // Strip Shift/Option to get the base key — Shift+2 should map
+        // to .digit2 (the modifier rides separately). `charactersIgnoringModifiers`
+        // is misnamed and still applies Shift. US-layout assumption.
+        guard let chars = event.characters(byApplyingModifiers: [])?.lowercased(),
               let first = chars.first else { return nil }
         switch first {
         case "a": return .keyA;  case "b": return .keyB;  case "c": return .keyC

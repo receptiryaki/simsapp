@@ -25,6 +25,7 @@ final class SimulatorTabController: NSWindowController, NSWindowDelegate {
 
     private let simulators: any Simulators
     private let onNewTab: @MainActor () -> Void
+    private let recents = RecentSimulators()
 
     private var mode: Mode = .picker
 
@@ -184,6 +185,10 @@ final class SimulatorTabController: NSWindowController, NSWindowDelegate {
     /// Tear down any active stream and show the picker table.
     private func enterPickerMode() {
         if case .streaming(_, let screen, _) = mode { screen.stop() }
+        if let recording = currentRecording {
+            currentRecording = nil
+            toolQueue.async { recording.stop() }
+        }
         mode = .picker
         window?.title = "Select Simulator"
         removeStreamToolbarItems()
@@ -255,7 +260,7 @@ final class SimulatorTabController: NSWindowController, NSWindowDelegate {
     /// drive UIKit's rotation; Paste was redundant with iOS's own
     /// pasteboard sync; Toggle Keyboard has no public toggle path.
     private static let streamItemIdentifiers: [NSToolbarItem.Identifier] = [
-        .home, .screenshot, .volumeGroup
+        .home, .screenshot, .recordVideo, .volumeGroup
     ]
 
     // MARK: toolbar actions
@@ -291,6 +296,57 @@ final class SimulatorTabController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    /// Active recording handle while a video capture is in flight; nil
+    /// when idle. Updated only on the main actor.
+    private var currentRecording: SimctlUtil.VideoRecording?
+    private weak var recordVideoToolbarItem: NSToolbarItem?
+
+    @objc func recordVideoAction(_ sender: Any?) {
+        guard case .streaming(let sim, _, _) = mode else { return }
+        if let recording = currentRecording {
+            currentRecording = nil
+            updateRecordToolbarItem(isRecording: false)
+            let url = recording.outputURL
+            toolQueue.async {
+                recording.stop()
+                Task { @MainActor in
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                }
+            }
+            return
+        }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH-mm-ss"
+        let safeName = sim.name.replacingOccurrences(of: "/", with: "-")
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Desktop")
+            .appendingPathComponent("Sims \(safeName) \(formatter.string(from: Date())).mov")
+        let udid = sim.udid
+        toolQueue.async { [weak self] in
+            let result = Result { try SimctlUtil.startRecordVideo(udid: udid, to: url) }
+            Task { @MainActor in
+                guard let self else { return }
+                switch result {
+                case .success(let rec):
+                    self.currentRecording = rec
+                    self.updateRecordToolbarItem(isRecording: true)
+                case .failure(let error):
+                    logErr("recordVideo \(udid): \(error)")
+                }
+            }
+        }
+    }
+
+    private func updateRecordToolbarItem(isRecording: Bool) {
+        guard let item = recordVideoToolbarItem else { return }
+        let symbol = isRecording ? "stop.circle.fill" : "record.circle"
+        let label  = isRecording ? "Stop Recording" : "Record"
+        item.label = label
+        item.toolTip = label
+        item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)?
+            .withSymbolConfiguration(.init(scale: .small))
+    }
+
     @objc func volumeUpAction(_ sender: Any?) {
         guard case .streaming(_, _, let input) = mode else { return }
         toolQueue.async { _ = input.button(.volumeUp, duration: 0) }
@@ -299,6 +355,28 @@ final class SimulatorTabController: NSWindowController, NSWindowDelegate {
     @objc func volumeDownAction(_ sender: Any?) {
         guard case .streaming(_, _, let input) = mode else { return }
         toolQueue.async { _ = input.button(.volumeDown, duration: 0) }
+    }
+
+    /// Held until the sheet's completion fires so it isn't deallocated
+    /// mid-presentation.
+    private var newSimulatorSheet: NewSimulatorSheetController?
+
+    @objc func newDeviceAction(_ sender: Any?) {
+        guard case .picker = mode, let parent = window else { return }
+        let sheet = NewSimulatorSheetController()
+        newSimulatorSheet = sheet
+        sheet.present(over: parent) { [weak self] udid in
+            self?.newSimulatorSheet = nil
+            if udid != nil, case .picker = self?.mode { self?.refresh() }
+        }
+    }
+
+    @objc func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(newDeviceAction(_:)) {
+            if case .picker = mode { return true }
+            return false
+        }
+        return true
     }
 
     // MARK: new tab (Cmd-T / "+" on the tab bar / File menu)
@@ -327,7 +405,7 @@ final class SimulatorTabController: NSWindowController, NSWindowDelegate {
         let aggregate = simulators
         Task.detached(priority: .userInitiated) { [weak self] in
             let fresh = aggregate.all
-            await MainActor.run { self?.apply(fresh) }
+            await self?.apply(fresh)
         }
     }
 
@@ -341,7 +419,29 @@ final class SimulatorTabController: NSWindowController, NSWindowDelegate {
             listStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
-        for (index, sim) in fresh.enumerated() {
+
+        let byUDID = Dictionary(uniqueKeysWithValues: fresh.map { ($0.udid, $0) })
+        let recentList: [any Simulator] = recents.get().compactMap { byUDID[$0] }
+        let recentSet = Set(recentList.map(\.udid))
+        let others: [any Simulator] = fresh.filter { !recentSet.contains($0.udid) }
+
+        if recentList.isEmpty {
+            addSection(title: nil, sims: fresh)
+        } else {
+            addSection(title: "Recent", sims: recentList)
+            addSection(title: "All Simulators", sims: others)
+        }
+    }
+
+    private func addSection(title: String?, sims: [any Simulator]) {
+        guard !sims.isEmpty else { return }
+        if let title {
+            let header = makeSectionHeader(title)
+            listStack.addArrangedSubview(header)
+            header.leadingAnchor.constraint(equalTo: listStack.leadingAnchor).isActive = true
+            header.trailingAnchor.constraint(equalTo: listStack.trailingAnchor).isActive = true
+        }
+        for (index, sim) in sims.enumerated() {
             let row = SimulatorRowView(simulator: sim)
             row.onBoot     = { [weak self] s in self?.bootSimulator(s) }
             row.onShutdown = { [weak self] s in self?.shutdownSimulator(s) }
@@ -349,7 +449,7 @@ final class SimulatorTabController: NSWindowController, NSWindowDelegate {
             listStack.addArrangedSubview(row)
             row.leadingAnchor.constraint(equalTo: listStack.leadingAnchor).isActive = true
             row.trailingAnchor.constraint(equalTo: listStack.trailingAnchor).isActive = true
-            if index < fresh.count - 1 {
+            if index < sims.count - 1 {
                 let divider = NSBox()
                 divider.boxType = .separator
                 divider.translatesAutoresizingMaskIntoConstraints = false
@@ -361,6 +461,23 @@ final class SimulatorTabController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    private func makeSectionHeader(_ title: String) -> NSView {
+        let label = NSTextField(labelWithString: title.uppercased())
+        label.font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
+        label.textColor = .secondaryLabelColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor),
+            label.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
+            label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -6),
+        ])
+        return container
+    }
+
     // MARK: row actions
 
     private func bootSimulator(_ sim: any Simulator) {
@@ -368,7 +485,7 @@ final class SimulatorTabController: NSWindowController, NSWindowDelegate {
             do { try sim.boot() } catch {
                 logErr("boot \(sim.udid): \(error)")
             }
-            await MainActor.run { self?.refresh() }
+            await self?.refresh()
         }
     }
 
@@ -377,12 +494,13 @@ final class SimulatorTabController: NSWindowController, NSWindowDelegate {
             do { try sim.shutdown() } catch {
                 logErr("shutdown \(sim.udid): \(error)")
             }
-            await MainActor.run { self?.refresh() }
+            await self?.refresh()
         }
     }
 
     private func activateSimulator(_ sim: any Simulator) {
         guard sim.state == .booted else { return }
+        recents.bump(sim.udid)
         enterStreamMode(for: sim)
     }
 
@@ -630,6 +748,13 @@ extension SimulatorTabController: NSToolbarDelegate {
                 label: "Screenshot", symbol: "camera.fill",
                 action: #selector(screenshotAction(_:))
             )
+        case .recordVideo:
+            recordVideoToolbarItem = makeItem(
+                identifier: itemIdentifier,
+                label: "Record", symbol: "record.circle",
+                action: #selector(recordVideoAction(_:))
+            )
+            return recordVideoToolbarItem
         case .volumeGroup:
             return makeVolumeGroup()
         default:
@@ -701,6 +826,7 @@ extension NSToolbarItem.Identifier {
     static let volumeGroup = NSToolbarItem.Identifier("sims.volumeGroup")
     static let volumeUp    = NSToolbarItem.Identifier("sims.volumeUp")
     static let volumeDown  = NSToolbarItem.Identifier("sims.volumeDown")
+    static let recordVideo = NSToolbarItem.Identifier("sims.recordVideo")
 }
 
 /// IOSurface transfer wrapper for the background-queue → MainActor hop
@@ -716,4 +842,22 @@ private struct FrameBox: @unchecked Sendable {
 /// view, not the bottom (AppKit's default for bottom-up coords).
 private final class FlippedView: NSView {
     override var isFlipped: Bool { true }
+}
+
+/// Most-recently-activated simulators by UDID, persisted in
+/// `UserDefaults`. Capped — older entries fall off as new ones bump in.
+private struct RecentSimulators {
+    private let key = "sims.recents"
+    private let cap = 5
+
+    func get() -> [String] {
+        UserDefaults.standard.stringArray(forKey: key) ?? []
+    }
+
+    func bump(_ udid: String) {
+        var list = get().filter { $0 != udid }
+        list.insert(udid, at: 0)
+        if list.count > cap { list = Array(list.prefix(cap)) }
+        UserDefaults.standard.set(list, forKey: key)
+    }
 }
