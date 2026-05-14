@@ -8,7 +8,7 @@
 // Released version. Bump this when cutting a release; the GitHub
 // Actions release workflow verifies the pushed tag (e.g. v0.2.0)
 // matches this value before building.
-MARKETING_VERSION = 0.1.0
+MARKETING_VERSION = 0.1.1
 
 // Internal build number. Kept in lockstep with MARKETING_VERSION so
 // there's one knob to turn. Apple only requires this to be a 1-3
