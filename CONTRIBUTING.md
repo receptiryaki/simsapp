@@ -100,6 +100,86 @@ mood. The body explains *why*, the diff explains *what*.
 - [ ] If the change is user-visible, `CHANGELOG.md`'s `[Unreleased]`
       section has a line for it.
 
+## Cutting a release
+
+Releases are tag-driven and notarised by CI. The full pipeline
+(Developer-ID signing, notarytool submission, stapling, GitHub
+Release creation) runs in `.github/workflows/release.yml` — local
+machines don't need any certificate setup just to ship a version.
+
+The version is **a single value in `Sims/Sims.xcconfig`**:
+
+```
+MARKETING_VERSION = 0.1.0
+```
+
+`CURRENT_PROJECT_VERSION` tracks it via `$(MARKETING_VERSION)`, and
+`Info.plist` reads both via `$(...)` expansion. One edit changes
+everything.
+
+### Steps
+
+1. Pick the next version. We use [SemVer](https://semver.org/) —
+   `MAJOR.MINOR.PATCH`. Pre-1.0 we treat each minor as a feature
+   release and each patch as a fix-only release. A breaking change
+   (e.g. dropping an Xcode version) bumps minor while we're still
+   on 0.x, or major from 1.0 onwards.
+
+2. Branch and bump:
+
+   ```sh
+   git checkout -b release/v0.2.0
+   # edit Sims/Sims.xcconfig: MARKETING_VERSION = 0.2.0
+   # in CHANGELOG.md: rename `## [Unreleased]` to `## [0.2.0] - YYYY-MM-DD`
+   # and add a fresh empty `## [Unreleased]` above it
+   # update the link references at the bottom of CHANGELOG.md
+   git commit -am "release: v0.2.0"
+   git push -u origin release/v0.2.0
+   ```
+
+3. Open and merge the PR (squash). Main now reflects the new version.
+
+4. Tag from main and push:
+
+   ```sh
+   git checkout main && git pull
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+
+5. GitHub Actions takes over. The `Release` workflow:
+   - verifies the tag matches `MARKETING_VERSION` in the xcconfig,
+   - signs with Developer ID, notarises via the App Store Connect
+     API key,
+   - staples the ticket onto `Sims.app`,
+   - creates a GitHub Release titled `Sims v0.2.0` with the
+     `## [0.2.0]` block from `CHANGELOG.md` as the body, and
+     `Sims.zip` attached.
+
+   Typical run time: 8–15 minutes (notarytool is the bottleneck).
+
+### If something goes wrong
+
+- **Tag-version mismatch**: the workflow fails fast at the
+  "Verify tag matches Sims.xcconfig" step. Either bump the
+  xcconfig and re-tag, or delete the tag and re-tag once you've
+  picked a consistent version.
+- **Notarisation rejection**: the run logs include the notarytool
+  submission ID. Pull the developer log with `xcrun notarytool log
+  <id> --key ... --key-id ... --issuer ...` (or use the Actions
+  log link). Fix the underlying issue (usually a missing
+  entitlement or unsigned nested binary), then re-run the
+  workflow via the **Run workflow** button on the Actions tab.
+- **Need to re-release the same tag**: use the workflow's
+  `workflow_dispatch` trigger (manual run with the same tag as
+  input). Delete the GitHub Release first if it was partly
+  created.
+
+### One-time CI setup
+
+Before the first release, the repo needs six secrets configured —
+walked through in [`scripts/DISTRIBUTION.md`](./scripts/DISTRIBUTION.md).
+
 ## Bug reports
 
 Use the **Bug report** issue template. Include your macOS version,
