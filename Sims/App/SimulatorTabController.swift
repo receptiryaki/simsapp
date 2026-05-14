@@ -403,9 +403,11 @@ final class SimulatorTabController: NSWindowController, NSWindowDelegate {
     private func refresh() {
         guard case .picker = mode else { return }
         let aggregate = simulators
-        Task.detached(priority: .userInitiated) { [weak self] in
-            let fresh = aggregate.all
-            await self?.apply(fresh)
+        Task { @MainActor [weak self] in
+            let fresh = await Task.detached(priority: .userInitiated) {
+                aggregate.all
+            }.value
+            self?.apply(fresh)
         }
     }
 
@@ -481,20 +483,24 @@ final class SimulatorTabController: NSWindowController, NSWindowDelegate {
     // MARK: row actions
 
     private func bootSimulator(_ sim: any Simulator) {
-        Task.detached(priority: .userInitiated) { [weak self] in
-            do { try sim.boot() } catch {
-                logErr("boot \(sim.udid): \(error)")
-            }
-            await self?.refresh()
+        Task { @MainActor [weak self] in
+            await Task.detached(priority: .userInitiated) {
+                do { try sim.boot() } catch {
+                    logErr("boot \(sim.udid): \(error)")
+                }
+            }.value
+            self?.refresh()
         }
     }
 
     private func shutdownSimulator(_ sim: any Simulator) {
-        Task.detached(priority: .userInitiated) { [weak self] in
-            do { try sim.shutdown() } catch {
-                logErr("shutdown \(sim.udid): \(error)")
-            }
-            await self?.refresh()
+        Task { @MainActor [weak self] in
+            await Task.detached(priority: .userInitiated) {
+                do { try sim.shutdown() } catch {
+                    logErr("shutdown \(sim.udid): \(error)")
+                }
+            }.value
+            self?.refresh()
         }
     }
 
