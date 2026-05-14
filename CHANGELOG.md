@@ -6,6 +6,16 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-05-14
+
+### Fixed
+
+- Release builds now use the macOS 26 SDK so the shipped `.app`
+  renders with Liquid Glass on macOS 26 hosts. CI was pinned to
+  the `macos-15` runner (macOS 15 SDK, Xcode 16), which gates the
+  app out of the new design language. Both `release.yml` and
+  `build.yml` now run on `macos-26` (Xcode 26.2).
+
 ## [0.1.0] - 2026-05-14
 
 ### Added
@@ -25,5 +35,6 @@ project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   / shutdown hops in `SimulatorTabController` — restructured the
   detached-Task callbacks so `self` stays on `@MainActor`.
 
-[Unreleased]: https://github.com/receptiryaki/simsapp/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/receptiryaki/simsapp/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/receptiryaki/simsapp/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/receptiryaki/simsapp/releases/tag/v0.1.0
