@@ -1,0 +1,249 @@
+name: Release
+
+# Tag-driven Developer-ID-signed + notarised release pipeline.
+#
+# Trigger: pushing a tag matching `v*` (e.g. v0.1.0). The tag's version
+# segment must match MARKETING_VERSION in Sims/Sims.xcconfig — the
+# workflow checks this up-front so the artifact's CFBundleShortVersionString
+# can't drift from the tag.
+#
+# `workflow_dispatch` is also wired so a previous tag can be re-released
+# (e.g. after a notarytool retry) without re-tagging the repo.
+#
+# Required repo secrets (one-time setup, see scripts/DISTRIBUTION.md):
+#   DEVELOPER_ID_CERT_P12           - base64 of your Developer ID Application .p12
+#   DEVELOPER_ID_CERT_PASSWORD      - the export password set in Keychain Access
+#   APP_STORE_CONNECT_API_KEY_P8    - base64 of the AuthKey_<id>.p8 file
+#   APP_STORE_CONNECT_API_KEY_ID    - 10-char Key ID from App Store Connect
+#   APP_STORE_CONNECT_API_ISSUER_ID - issuer UUID from App Store Connect
+#   DEVELOPMENT_TEAM                - your Apple Developer Team ID (10 chars)
+#
+# Every templated value is routed through `env:` rather than inlined into
+# `run:` blocks — protects against shell injection if a tag name contains
+# shell metacharacters (very unlikely but cheap to defend against).
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v0.1.0). Must already exist."
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  # The bundle identifier baked into the release artifact. Must match
+  # the Developer ID Application cert's authority. Forks should change
+  # this to their own reverse-DNS.
+  BUNDLE_ID: com.receptiryaki.sims
+
+jobs:
+  release:
+    name: Notarise and publish
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Resolve target tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            REF="$INPUT_TAG"
+          else
+            REF="${GITHUB_REF#refs/tags/}"
+          fi
+          # Reject anything that isn't v<digit>.<digit>.<digit> with optional
+          # pre-release suffix. Belt-and-braces against weird tag names.
+          if ! printf '%s' "$REF" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9.]+)?$'; then
+            echo "::error::Tag '$REF' is not in the expected v<MAJOR>.<MINOR>.<PATCH> form."
+            exit 1
+          fi
+          printf 'ref=%s\n'      "$REF"      >> "$GITHUB_OUTPUT"
+          printf 'version=%s\n'  "${REF#v}"  >> "$GITHUB_OUTPUT"
+
+      - name: Checkout repo at tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.ref }}
+
+      - name: Show toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          xcode-select -p
+          swift --version
+
+      - name: Verify tag matches Sims.xcconfig
+        env:
+          TAG_VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          XCCONFIG_VERSION=$(
+            awk -F'=' '/^[[:space:]]*MARKETING_VERSION/ {
+              gsub(/[[:space:]]/, "", $2)
+              print $2
+              exit
+            }' Sims/Sims.xcconfig
+          )
+          if [ "$XCCONFIG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Tag version ($TAG_VERSION) does not match Sims/Sims.xcconfig MARKETING_VERSION ($XCCONFIG_VERSION)."
+            echo "Either re-tag to v$XCCONFIG_VERSION, or bump MARKETING_VERSION to $TAG_VERSION and re-tag."
+            exit 1
+          fi
+          echo "Tag and xcconfig agree on $TAG_VERSION."
+
+      - name: Import Developer ID certificate into temp keychain
+        env:
+          CERT_P12_BASE64: ${{ secrets.DEVELOPER_ID_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/sims-build.keychain-db"
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 32)"
+          CERT_PATH="$RUNNER_TEMP/cert.p12"
+
+          echo "$CERT_P12_BASE64" | base64 --decode > "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          security import "$CERT_PATH" \
+            -P "$CERT_PASSWORD" \
+            -A -t cert -f pkcs12 \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security \
+            -k "$KEYCHAIN_PATH"
+
+          security set-key-partition-list \
+            -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Replace the default search list with the temp keychain so
+          # codesign / xcodebuild find the identity automatically.
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+
+          rm "$CERT_PATH"
+
+          # Sanity check — must show at least one Developer ID identity.
+          security find-identity -v -p codesigning
+
+      - name: Write Local.xcconfig from secrets
+        env:
+          TEAM_ID: ${{ secrets.DEVELOPMENT_TEAM }}
+        run: |
+          cat > Sims/Local.xcconfig <<EOF
+          PRODUCT_BUNDLE_IDENTIFIER = $BUNDLE_ID
+          DEVELOPMENT_TEAM = $TEAM_ID
+          EOF
+
+      - name: Render ExportOptions.plist
+        env:
+          TEAM_ID: ${{ secrets.DEVELOPMENT_TEAM }}
+        run: |
+          sed "s/__TEAM_ID__/$TEAM_ID/" \
+            scripts/ExportOptions.plist.template \
+            > scripts/ExportOptions.plist
+
+      - name: Archive (Release)
+        run: |
+          xcodebuild \
+            -project Sims.xcodeproj \
+            -scheme Sims \
+            -configuration Release \
+            -destination "generic/platform=macOS" \
+            -archivePath build/Sims.xcarchive \
+            archive
+
+      - name: Export signed .app
+        run: |
+          xcodebuild \
+            -exportArchive \
+            -archivePath build/Sims.xcarchive \
+            -exportOptionsPlist scripts/ExportOptions.plist \
+            -exportPath build/export
+          test -d build/export/Sims.app
+
+      - name: Verify signature
+        run: |
+          codesign --verify --deep --strict --verbose=2 build/export/Sims.app
+          codesign --display --verbose=4 build/export/Sims.app 2>&1 \
+            | grep -E "Authority|TeamIdentifier|Timestamp|Runtime" || true
+
+      - name: Submit to Apple notary service
+        env:
+          KEY_ID:         ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          ISSUER_ID:      ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+          KEY_P8_BASE64:  ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
+        run: |
+          KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+          ZIP_PATH="$RUNNER_TEMP/Sims-for-notary.zip"
+
+          echo "$KEY_P8_BASE64" | base64 --decode > "$KEY_PATH"
+
+          /usr/bin/ditto -c -k --keepParent build/export/Sims.app "$ZIP_PATH"
+
+          xcrun notarytool submit "$ZIP_PATH" \
+            --key "$KEY_PATH" \
+            --key-id "$KEY_ID" \
+            --issuer "$ISSUER_ID" \
+            --wait \
+            --timeout 30m
+
+          rm "$KEY_PATH"
+
+      - name: Staple notarisation ticket
+        run: |
+          xcrun stapler staple build/export/Sims.app
+          xcrun stapler validate build/export/Sims.app
+
+      - name: Final Gatekeeper assessment
+        run: |
+          spctl --assess --type execute --verbose=2 build/export/Sims.app
+
+      - name: Package release artifact
+        run: |
+          mkdir -p dist
+          cp -R build/export/Sims.app dist/Sims.app
+          /usr/bin/ditto -c -k --keepParent dist/Sims.app dist/Sims.zip
+          du -sh dist/Sims.app dist/Sims.zip
+
+      - name: Extract release notes from CHANGELOG
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          # Pull lines between the [VERSION] heading and the next ## [ heading.
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { capture = 1; next }
+            capture && /^## \[/      { capture = 0 }
+            capture                  { print }
+          ' CHANGELOG.md > release-notes.md
+
+          if [ ! -s release-notes.md ]; then
+            echo "::warning::No '## [$VERSION]' section found in CHANGELOG.md — falling back to placeholder notes."
+            printf 'Release v%s.\n\nSee [CHANGELOG.md](./CHANGELOG.md) for details.\n' "$VERSION" \
+              > release-notes.md
+          fi
+
+          echo "--- release notes ---"
+          cat release-notes.md
+          echo "--- end ---"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF: ${{ steps.tag.outputs.ref }}
+        run: |
+          gh release create "$REF" \
+            --title  "Sims $REF" \
+            --notes-file release-notes.md \
+            dist/Sims.zip
+
+      - name: Cleanup temp keychain
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/sims-build.keychain-db" || true
