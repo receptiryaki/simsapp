@@ -127,6 +127,7 @@ final class StreamView: NSView {
     private static let touchRingDiameter: CGFloat = 44
 
     private func showTouchRing(at point: CGPoint) {
+        guard Settings.shared.showTouchRing else { return }
         let d = Self.touchRingDiameter
         let ring = touchRingLayer ?? CAShapeLayer()
         ring.bounds = CGRect(x: 0, y: 0, width: d, height: d)

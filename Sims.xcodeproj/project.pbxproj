@@ -25,6 +25,8 @@
 		1B1400000000000000001014 /* IndigoHIDInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A14000000000000000010F4 /* IndigoHIDInput.swift */; };
 		1B1900000000000000001019 /* SimctlUtil.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A19000000000000000010F9 /* SimctlUtil.swift */; };
 		1B1A0000000000000000101A /* NewSimulatorSheetController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A1A000000000000000010FA /* NewSimulatorSheetController.swift */; };
+		1B1B0000000000000000101B /* Settings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A1B000000000000000010FB /* Settings.swift */; };
+		1B1C0000000000000000101C /* SettingsWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A1C000000000000000010FC /* SettingsWindowController.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -49,6 +51,8 @@
 		1A14000000000000000010F4 /* IndigoHIDInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndigoHIDInput.swift; sourceTree = "<group>"; };
 		1A19000000000000000010F9 /* SimctlUtil.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SimctlUtil.swift; sourceTree = "<group>"; };
 		1A1A000000000000000010FA /* NewSimulatorSheetController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewSimulatorSheetController.swift; sourceTree = "<group>"; };
+		1A1B000000000000000010FB /* Settings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Settings.swift; sourceTree = "<group>"; };
+		1A1C000000000000000010FC /* SettingsWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindowController.swift; sourceTree = "<group>"; };
 		1A20000000000000000020F0 /* Sims.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Sims.xcconfig; sourceTree = "<group>"; };
 		1A21000000000000000020F1 /* Local.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text; path = Local.xcconfig.example; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -95,6 +99,8 @@
 				1A0E000000000000000000FE /* StreamView.swift */,
 				1A19000000000000000010F9 /* SimctlUtil.swift */,
 				1A1A000000000000000010FA /* NewSimulatorSheetController.swift */,
+				1A1B000000000000000010FB /* Settings.swift */,
+				1A1C000000000000000010FC /* SettingsWindowController.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -267,6 +273,8 @@
 				1B1400000000000000001014 /* IndigoHIDInput.swift in Sources */,
 				1B1900000000000000001019 /* SimctlUtil.swift in Sources */,
 				1B1A0000000000000000101A /* NewSimulatorSheetController.swift in Sources */,
+				1B1B0000000000000000101B /* Settings.swift in Sources */,
+				1B1C0000000000000000101C /* SettingsWindowController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
