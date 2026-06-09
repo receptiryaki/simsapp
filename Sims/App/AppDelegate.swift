@@ -4,10 +4,20 @@ import Cocoa
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var simulators: (any Simulators)?
     private var controllers: [SimulatorTabController] = []
+    private var settingsWindowController: SettingsWindowController?
     /// The window subsequent tabs join via `addTabbedWindow`. Tracks
     /// the most-recently-opened tab; if it goes away, we use any
     /// remaining controller as the next anchor.
     private weak var anchorWindow: NSWindow?
+
+    @objc func showSettings(_ sender: Any?) {
+        if settingsWindowController == nil {
+            settingsWindowController = SettingsWindowController()
+        }
+        settingsWindowController?.showWindow(nil)
+        settingsWindowController?.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Enable system-managed tabbing before any NSWindow exists.
@@ -103,6 +113,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             keyEquivalent: ""
         ))
         appMenu.addItem(.separator())
+        let settings = NSMenuItem(
+            title: "Settings…",
+            action: #selector(showSettings(_:)),
+            keyEquivalent: ","
+        )
+        settings.target = self
+        appMenu.addItem(settings)
+        appMenu.addItem(.separator())
         let hide = NSMenuItem(
             title: "Hide Sims",
             action: #selector(NSApplication.hide(_:)),
@@ -140,6 +158,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             title: "New Tab",
             action: #selector(NSWindow.newWindowForTab(_:)),
             keyEquivalent: "t"
+        ))
+        fileMenu.addItem(NSMenuItem(
+            title: "New Simulator…",
+            action: #selector(SimulatorTabController.newDeviceAction(_:)),
+            keyEquivalent: "n"
         ))
         fileMenu.addItem(.separator())
         fileMenu.addItem(NSMenuItem(
