@@ -1,5 +1,21 @@
 # Sims
 
+> [!IMPORTANT]
+> **This project is no longer maintained.** Apple shipped
+> [**Device Hub**](https://developer.apple.com/documentation/xcode/device-hub)
+> with Xcode 27 (announced at WWDC 2026), which does natively — and supported —
+> what Sims set out to do: a unified workspace for managing simulators and
+> physical devices with live display, touch input, hardware controls, zoom,
+> resize, and keyboard capture. Per Apple, "Device Hub replaces Simulator and
+> does a whole lot more too."
+>
+> Since Device Hub is a first-party, officially supported tool that doesn't
+> depend on reverse-engineered private frameworks, there's no reason to keep
+> maintaining Sims. The repository is **archived** (read-only). The code and the
+> reverse-engineering notes under [`.claude/`](./.claude/) remain available for
+> reference. Thanks to everyone who tried it. — see
+> [Managing your simulated and physical devices in Device Hub](https://developer.apple.com/documentation/xcode/managing-your-simulated-and-physical-devices-in-device-hub).
+
 A native macOS app for managing and streaming iOS simulators, with each
 simulator living in its own AppKit tab inside a single window.
 
